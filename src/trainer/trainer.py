@@ -20,7 +20,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast      # ← new API (PyTorch 2.x)
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
@@ -80,7 +80,7 @@ class Trainer:
         self.scheduler = self._build_scheduler(tcfg)
 
         # ── AMP Scaler ───────────────────────────────────────
-        self.scaler = GradScaler(enabled=self.use_amp)
+        self.scaler = GradScaler("cuda", enabled=self.use_amp)  # new API
 
         # ── Logger ───────────────────────────────────────────
         self.logger = ExperimentLogger(cfg, run_dir=str(self.run_dir / "logs"))
@@ -190,17 +190,19 @@ class Trainer:
             self._log_epoch(epoch_num, train_metrics, val_metrics)
 
             # ── Save checkpoint ──────────────────────────────
+            # Prefix val_metrics with 'val_' so monitor key 'val_dice_mean' is found
+            val_metrics_prefixed = {f"val_{k}": v for k, v in val_metrics.items()}
             self.ckpt_manager.save(
                 epoch=epoch_num,
                 model=self.model,
                 optimizer=self.optimizer,
                 scheduler=self.scheduler,
-                metrics=val_metrics,
+                metrics=val_metrics_prefixed,
                 extra={"train_metrics": train_metrics},
             )
 
             # ── Early stopping ───────────────────────────────
-            if self.early_stopping and self.early_stopping.step(val_metrics):
+            if self.early_stopping and self.early_stopping.step(val_metrics_prefixed):
                 self.logger.info(
                     f"\nEarly stopping triggered at epoch {epoch_num} "
                     f"(patience={self.early_stopping.patience})"
@@ -242,7 +244,7 @@ class Trainer:
             labels = batch["label"].to(self.device, non_blocking=True)   # (B, H, W)
 
             # Forward pass with AMP
-            with autocast(enabled=self.use_amp):
+            with autocast("cuda", enabled=self.use_amp):  # new API
                 logits = self.model(images)                               # (B, C, H, W)
                 loss, loss_dict = self.criterion(logits, labels)
                 loss = loss / self.accum_steps
@@ -304,7 +306,7 @@ class Trainer:
             images = batch["image"].to(self.device, non_blocking=True)
             labels = batch["label"].to(self.device, non_blocking=True)
 
-            with autocast(enabled=self.use_amp):
+            with autocast("cuda", enabled=self.use_amp):  # new API
                 logits = self.model(images)
                 loss, loss_dict = self.criterion(logits, labels)
 

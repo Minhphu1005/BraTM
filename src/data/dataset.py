@@ -90,22 +90,30 @@ def detect_brats_version(root_dir: str) -> str:
 
 def _find_modality_file(patient_dir: Path, pid: str, modality: str) -> Optional[Path]:
     """
-    Locate a modality NIfTI file using several naming patterns.
+    Locate a modality NIfTI file — tries many naming variants.
 
-    Handles:
-      BraTS2021: BraTS2021_00001_t1.nii.gz
-      BraTS2020: BraTS20_Training_001_t1.nii.gz
+    Supports both compressed (.nii.gz) and uncompressed (.nii) files,
+    plus case variants (t1 / T1 / t1ce / T1CE).
     """
-    candidates = [
-        patient_dir / f"{pid}_{modality}.nii.gz",
-        patient_dir / f"{pid}_{modality}_stripped.nii.gz",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    # Fallback glob
-    matches = list(patient_dir.glob(f"*_{modality}.nii.gz"))
-    return matches[0] if matches else None
+    mod_variants = [modality, modality.upper(), modality.capitalize()]
+    extensions   = [".nii.gz", ".nii"]          # ← try both
+
+    for mv in mod_variants:
+        for ext in extensions:
+            for suffix in [f"_{mv}{ext}", f"_{mv}_stripped{ext}"]:
+                candidate = patient_dir / f"{pid}{suffix}"
+                if candidate.exists():
+                    return candidate
+
+    # Glob fallback — case-insensitive, both extensions
+    for f in patient_dir.iterdir():
+        name_lower = f.name.lower()
+        for ext in extensions:
+            if name_lower.endswith(f"_{modality}{ext}") or \
+               name_lower.endswith(f"_{modality}_stripped{ext}"):
+                return f
+
+    return None
 
 
 # ─── Patient Scanner ───────────────────────────────────────
@@ -115,6 +123,7 @@ def scan_brats_patients(root_dir: str, modalities: List[str]) -> List[Dict]:
 
     Auto-detects BraTS2020 ('BraTS20_Training_XXX') and
     BraTS2021 ('BraTS2021_XXXXX') naming conventions.
+    Also handles an extra nesting level (e.g. root/BraTS20_Training/BraTS20_Training_001/).
 
     Returns:
         List of dicts: {'id': str, 't1': path, 't1ce': path,
@@ -122,10 +131,48 @@ def scan_brats_patients(root_dir: str, modalities: List[str]) -> List[Dict]:
                         'version': '2020'|'2021'}
     """
     root = Path(root_dir)
-    patients = []
+    if not root.exists():
+        print(f"  ❌ Path does not exist: {root_dir}")
+        return []
 
-    version = detect_brats_version(root_dir)
+    # ── Check for extra nesting level ─────────────────────────
+    # Some downloads unzip as: root/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/
+    # We detect that and dive one level deeper automatically.
+    all_items = [d for d in sorted(root.iterdir()) if d.is_dir()]
+    if all_items:
+        first_name = all_items[0].name
+        # If the first subfolder itself contains patient dirs, we're at the right level
+        # But if it contains another level of dirs that look like patients, dive deeper
+        if not (first_name.startswith("BraTS20_") or first_name.startswith("BraTS2021_")):
+            # Try one level deeper
+            deeper_candidates = []
+            for sub in all_items[:3]:  # check first 3 subdirs
+                deeper = [d for d in sub.iterdir() if d.is_dir()]
+                if deeper and (deeper[0].name.startswith("BraTS20_") or
+                               deeper[0].name.startswith("BraTS2021_")):
+                    print(f"  ⚠️  Found extra nesting — diving into: {sub.name}/")
+                    root = sub
+                    break
+
+    version = detect_brats_version(str(root))
     print(f"  Detected BraTS version : {version}")
+
+    # ── Diagnostics: print first patient structure ─────────────
+    patient_dirs = [d for d in sorted(root.iterdir()) if d.is_dir()]
+    if patient_dirs:
+        sample = patient_dirs[0]
+        print(f"  Sample patient dir    : {sample.name}")
+        files_inside = sorted(sample.iterdir())
+        print(f"  Files inside ({len(files_inside)} total):")
+        for f in files_inside[:8]:
+            print(f"    {f.name}")
+    else:
+        print(f"  ❌ No subdirectories found in: {root}")
+        return []
+
+    # ── Scan all patients ──────────────────────────────────────
+    patients = []
+    skipped_reasons: Dict[str, int] = {}
 
     for patient_dir in sorted(root.iterdir()):
         if not patient_dir.is_dir():
@@ -134,21 +181,32 @@ def scan_brats_patients(root_dir: str, modalities: List[str]) -> List[Dict]:
         pid = patient_dir.name
         entry = {"id": pid, "version": version}
         valid = True
+        skip_reason = None
 
         for mod in modalities:
             fpath = _find_modality_file(patient_dir, pid, mod)
             if fpath is None:
                 valid = False
+                skip_reason = f"missing_{mod}"
                 break
             entry[mod] = str(fpath)
 
-        seg_path = _find_modality_file(patient_dir, pid, "seg")
-        if seg_path is None:
-            valid = False
+        if valid:
+            seg_path = _find_modality_file(patient_dir, pid, "seg")
+            if seg_path is None:
+                valid = False
+                skip_reason = "missing_seg"
 
         if valid:
             entry["seg"] = str(seg_path)
             patients.append(entry)
+        elif skip_reason:
+            skipped_reasons[skip_reason] = skipped_reasons.get(skip_reason, 0) + 1
+
+    if skipped_reasons:
+        print(f"  ⚠️  Skipped patients:")
+        for reason, count in skipped_reasons.items():
+            print(f"     {reason}: {count} patients")
 
     return patients
 

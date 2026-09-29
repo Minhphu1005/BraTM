@@ -4,19 +4,23 @@ scripts/preprocess.py
 ======================
 Optional preprocessing script.
 
-For BraTS 2021, data is already:
+For BraTS 2020/2021, data is already:
   ✅ Co-registered to T1ce
   ✅ Skull-stripped
   ✅ Resampled to 1mm³ isotropic
 
-So this script handles:
+This script handles:
   1. Dataset validation (check all files exist)
   2. Statistics computation (mean/std per modality for logging)
-  3. Optional: Pre-extract all 2D slices to disk (faster training)
+  3. Label distribution analysis
 
 Usage:
-    python scripts/preprocess.py --data_root ./data/raw --validate
-    python scripts/preprocess.py --data_root ./data/raw --stats
+    # Tự đọc data_root từ configs/base_config.yaml
+    python scripts/preprocess.py --validate
+    python scripts/preprocess.py --validate --label_dist
+
+    # Hoặc truyền tay
+    python scripts/preprocess.py --data_root /path/to/BraTS --validate
 """
 
 import os
@@ -130,9 +134,21 @@ def count_label_distribution(patients: list):
     print(f"\n  ℹ️  Class imbalance confirms need for Dice Loss!")
 
 
+def load_config(config_path: str) -> dict:
+    try:
+        import yaml
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {}
+
+
 def main():
     parser = argparse.ArgumentParser(description="BraTS Dataset Preprocessing & Analysis")
-    parser.add_argument("--data_root",  type=str, required=True)
+    parser.add_argument("--data_root",  type=str, default=None,
+                        help="Path to BraTS data root. If not set, reads from configs/base_config.yaml")
+    parser.add_argument("--config",     type=str, default="configs/base_config.yaml",
+                        help="Config file to read data_root from (fallback)")
     parser.add_argument("--modalities", type=str, nargs="+",
                         default=["t1", "t1ce", "t2", "flair"])
     parser.add_argument("--validate",   action="store_true",
@@ -143,12 +159,27 @@ def main():
                         help="Compute voxel-level class distribution")
     args = parser.parse_args()
 
-    print(f"\n Scanning: {args.data_root}")
-    patients = scan_brats_patients(args.data_root, args.modalities)
+    # ── Resolve data_root ────────────────────────────────────
+    data_root = args.data_root
+    if data_root is None:
+        # Try to load from config
+        cfg_path = ROOT / args.config
+        cfg = load_config(str(cfg_path))
+        data_root = cfg.get("data", {}).get("root_dir", None)
+        if data_root:
+            print(f"  data_root loaded from config: {data_root}")
+        else:
+            print("❌ data_root not provided and not found in config.")
+            print("   Pass it explicitly: --data_root /path/to/BraTS/data")
+            sys.exit(1)
+
+    print(f"\n Scanning: {data_root}")
+    patients = scan_brats_patients(data_root, args.modalities)
     print(f"  Found {len(patients)} patients")
 
     if not patients:
         print("\n❌ No patients found! Check directory structure.")
+        print(f"   Expected folders like: BraTS20_Training_001/ or BraTS2021_00001/")
         sys.exit(1)
 
     if args.validate or (not args.stats and not args.label_dist):

@@ -152,10 +152,24 @@ def main():
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
         print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
-    # ── Run Directory ────────────────────────────────────────
+    # ── Run Directory → Google Drive ─────────────────────────
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name  = args.run_name or f"{cfg['model']['name']}_{timestamp}"
-    run_dir   = ROOT / "runs" / run_name
+
+    if args.dry_run:
+        # Dry run: lưu local (Drive sẽ chậm với fake data)
+        run_dir = ROOT / "runs" / run_name
+    else:
+        # Real training: lưu thẳng vào Drive
+        output_base = cfg.get("output", {}).get("base_dir", None)
+        if output_base:
+            run_dir = Path(output_base) / "runs" / run_name
+        else:
+            # Fallback: lưu local (nếu không cấu hình Drive)
+            run_dir = ROOT / "runs" / run_name
+            print("  ⚠️  output.base_dir không được cấu hình — lưu local (sẽ mất khi Colab disconnect!)")
+            print("     Thêm vào config: output.base_dir: /content/drive/MyDrive/BraTM/outputs")
+
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f" Run directory: {run_dir}")
 
@@ -180,16 +194,27 @@ def main():
             sys.exit(1)
 
         # Load or create splits
-        splits_path = ROOT / "data" / "splits.json"
-        if splits_path.exists():
+        # Ưu tiên: Drive → local → tạo mới
+        output_base  = cfg.get("output", {}).get("base_dir", None)
+        drive_splits = Path(output_base) / "splits.json" if output_base else None
+        local_splits = ROOT / "data" / "splits.json"
+
+        splits_path = None
+        if drive_splits and drive_splits.exists():
+            splits_path = drive_splits
+            print(f"  Loaded splits from Drive: {splits_path}")
+        elif local_splits.exists():
+            splits_path = local_splits
+            print(f"  Loaded splits from local: {splits_path}")
+
+        if splits_path:
             from src.data.dataset import load_splits
             splits = load_splits(str(splits_path))
-            # Filter by ID
             pid_map = {p["id"]: p for p in patients}
             train_p = [pid_map[pid] for pid in splits["train"] if pid in pid_map]
             val_p   = [pid_map[pid] for pid in splits["val"]   if pid in pid_map]
             test_p  = [pid_map[pid] for pid in splits["test"]  if pid in pid_map]
-            print(f"  Loaded existing splits: {len(train_p)} train / {len(val_p)} val / {len(test_p)} test")
+            print(f"  Splits: {len(train_p)} train / {len(val_p)} val / {len(test_p)} test")
         else:
             train_p, val_p, test_p = split_patients(
                 patients,
@@ -198,13 +223,17 @@ def main():
                 seed=seed,
             )
             from src.data.dataset import save_splits
-            save_splits(
-                {"train": [p["id"] for p in train_p],
-                 "val":   [p["id"] for p in val_p],
-                 "test":  [p["id"] for p in test_p]},
-                str(splits_path),
-            )
-            print(f"  Splits: {len(train_p)} train / {len(val_p)} val / {len(test_p)} test")
+            split_data = {
+                "train": [p["id"] for p in train_p],
+                "val":   [p["id"] for p in val_p],
+                "test":  [p["id"] for p in test_p],
+            }
+            # Lưu lên Drive (ưu tiên) + local backup
+            if drive_splits:
+                drive_splits.parent.mkdir(parents=True, exist_ok=True)
+                save_splits(split_data, str(drive_splits))
+            save_splits(split_data, str(local_splits))
+            print(f"  New splits: {len(train_p)} train / {len(val_p)} val / {len(test_p)} test")
 
         train_transforms = get_train_transforms(img_size)
         val_transforms   = get_val_transforms(img_size)

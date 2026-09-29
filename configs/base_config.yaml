@@ -7,8 +7,19 @@
 project:
   name: "BrainTumorSeg"
   version: "1.0.0"
-  description: "2D Brain Tumor Segmentation on BraTS 2021"
+  description: "2D Brain Tumor Segmentation on BraTS 2020"
   seed: 42
+
+# ─── Output (Google Drive) ──────────────────────────────────
+# TẤT CẢ output sẽ được lưu vào thư mục này trên Drive.
+# Colab session kết thúc sẽ không mất dữ liệu.
+output:
+  base_dir: "/content/drive/MyDrive/BraTM/outputs"
+  # Sub-folders (tự động tạo):
+  #   {base_dir}/runs/{run_name}/checkpoints/
+  #   {base_dir}/runs/{run_name}/logs/tensorboard/
+  #   {base_dir}/runs/{run_name}/visualizations/
+  #   {base_dir}/predictions/
 
 # ─── Dataset ────────────────────────────────────────────────
 data:
@@ -99,29 +110,28 @@ training:
 
 # ─── Checkpointing ──────────────────────────────────────────
 checkpoint:
-  save_dir: "./checkpoints"
+  save_dir: null          # null = auto: {output.base_dir}/runs/{run_name}/checkpoints
   save_top_k: 3
   monitor: "val_dice_mean"
   mode: "max"
-  filename: "epoch{epoch:03d}_dice{val_dice_mean:.4f}"
 
 # ─── Logging ────────────────────────────────────────────────
 logging:
-  log_dir: "./logs"
+  log_dir: null           # null = auto: {output.base_dir}/runs/{run_name}/logs
   tensorboard: true
   wandb:
-    enabled: false                # Set true + add api_key to enable
+    enabled: false
     project: "brain-tumor-seg"
     entity: null
 
   log_every_n_steps: 10
-  val_check_interval: 1           # validate every N epochs
+  val_check_interval: 1
   save_prediction_images: true
   num_vis_samples: 4
 
 # ─── Inference ──────────────────────────────────────────────
 inference:
-  checkpoint_path: null           # Path to best checkpoint
-  output_dir: "./predictions"
-  tta: false                      # Test-Time Augmentation (flip ensemble)
-  tta_flips: [[2], [3], [2, 3]]   # axes to flip
+  checkpoint_path: null   # Path to best checkpoint
+  output_dir: null        # null = auto: {output.base_dir}/predictions
+  tta: false              # Test-Time Augmentation (flip ensemble)
+  tta_flips: [[2], [3], [2, 3]]
