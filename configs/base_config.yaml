@@ -12,7 +12,9 @@ project:
 
 # ─── Dataset ────────────────────────────────────────────────
 data:
-  root_dir: "./data/raw"          # Path to BraTS dataset root
+  # ── BraTS2020 path trên Google Colab Drive ──────────────────────────────────
+  # Thay đổi nếu bạn đặt data ở chỗ khác
+  root_dir: "/content/drive/MyDrive/BraTM/dataset/BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData"
   processed_dir: "./data/processed"
   train_split: 0.80
   val_split: 0.10
