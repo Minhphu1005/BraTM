@@ -1,0 +1,125 @@
+# ============================================================
+#  Brain Tumor Segmentation — Base Configuration
+#  Dataset: BraTS 2021 (4 modalities: T1, T1ce, T2, FLAIR)
+#  Mode: 2D slice-based (suitable for Colab T4 GPU)
+# ============================================================
+
+project:
+  name: "BrainTumorSeg"
+  version: "1.0.0"
+  description: "2D Brain Tumor Segmentation on BraTS 2021"
+  seed: 42
+
+# ─── Dataset ────────────────────────────────────────────────
+data:
+  root_dir: "./data/raw"          # Path to BraTS dataset root
+  processed_dir: "./data/processed"
+  train_split: 0.80
+  val_split: 0.10
+  test_split: 0.10
+
+  # BraTS modalities
+  modalities: ["t1", "t1ce", "t2", "flair"]
+  num_classes: 4                  # 0=BG, 1=NCR/NET, 2=ED, 3=ET
+
+  # 2D slice extraction
+  slice_axis: 2                   # 0=sagittal, 1=coronal, 2=axial (recommended)
+  skip_empty_ratio: 0.90          # Skip up to 90% of empty slices (balance dataset)
+  min_tumor_pixels: 50            # Min tumor pixels to keep a slice
+
+  # Image size (after center crop)
+  image_size: [240, 240]
+  num_workers: 2                  # Keep low for Colab
+
+# ─── Augmentation ───────────────────────────────────────────
+augmentation:
+  train:
+    horizontal_flip: true
+    vertical_flip: true
+    random_rotation: 15           # degrees
+    random_scale: [0.9, 1.1]
+    brightness_jitter: 0.2
+    gaussian_noise_std: 0.01
+    elastic_deform: false         # Expensive, disable for speed
+  val:
+    horizontal_flip: false
+
+# ─── Model ──────────────────────────────────────────────────
+model:
+  name: "UNet2D"                  # Options: UNet2D, AttentionUNet2D, SegFormer
+  in_channels: 4                  # 4 MRI modalities
+  num_classes: 4
+  # U-Net specific
+  unet:
+    features: [32, 64, 128, 256, 512]
+    bilinear: true
+    dropout: 0.2
+  # Attention U-Net specific
+  attention_unet:
+    features: [64, 128, 256, 512]
+    dropout: 0.1
+
+# ─── Training ───────────────────────────────────────────────
+training:
+  epochs: 100
+  batch_size: 8                   # T4 GPU 15GB: safe with 2D 240x240 4-channel
+  accumulate_grad_batches: 2      # Effective batch = 16
+
+  # Optimizer
+  optimizer: "AdamW"
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+
+  # Scheduler
+  scheduler: "CosineAnnealingWarmRestarts"
+  scheduler_params:
+    T_0: 30
+    T_mult: 2
+    eta_min: 1.0e-6
+
+  # Loss
+  loss:
+    name: "DiceFocalLoss"
+    dice_weight: 1.0
+    focal_weight: 1.0
+    focal_gamma: 2.0
+    include_background: false
+
+  # Mixed precision (saves VRAM, speeds up training)
+  amp: true
+
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 20
+    monitor: "val_dice_mean"
+    mode: "max"
+
+# ─── Checkpointing ──────────────────────────────────────────
+checkpoint:
+  save_dir: "./checkpoints"
+  save_top_k: 3
+  monitor: "val_dice_mean"
+  mode: "max"
+  filename: "epoch{epoch:03d}_dice{val_dice_mean:.4f}"
+
+# ─── Logging ────────────────────────────────────────────────
+logging:
+  log_dir: "./logs"
+  tensorboard: true
+  wandb:
+    enabled: false                # Set true + add api_key to enable
+    project: "brain-tumor-seg"
+    entity: null
+
+  log_every_n_steps: 10
+  val_check_interval: 1           # validate every N epochs
+  save_prediction_images: true
+  num_vis_samples: 4
+
+# ─── Inference ──────────────────────────────────────────────
+inference:
+  checkpoint_path: null           # Path to best checkpoint
+  output_dir: "./predictions"
+  tta: false                      # Test-Time Augmentation (flip ensemble)
+  tta_flips: [[2], [3], [2, 3]]   # axes to flip

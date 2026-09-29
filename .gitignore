@@ -1,0 +1,15 @@
+data/raw/
+data/processed/
+runs/
+checkpoints/
+predictions/
+logs/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.egg-info/
+.env
+wandb/
+*.nii.gz
+*.nii
