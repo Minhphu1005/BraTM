@@ -60,14 +60,33 @@ class CheckpointManager:
         extra: dict = None,
     ) -> Optional[str]:
         """
-        Save checkpoint if monitored metric improved.
+        Save checkpoint. Tracks best by monitored metric.
 
         Returns:
-            Path to saved checkpoint, or None if not saved.
+            Path to saved checkpoint file.
         """
         value = metrics.get(self.monitor, None)
         if value is None:
-            return None
+            # Monitor key not found — print available keys to help debug
+            import warnings
+            warnings.warn(
+                f"[CheckpointManager] Monitor key '{self.monitor}' not found in metrics.\n"
+                f"  Available keys: {list(metrics.keys())}\n"
+                f"  Checkpoint will be saved but best tracking is disabled until key is found.",
+                stacklevel=2,
+            )
+            # Save anyway (without best tracking)
+            fname = f"epoch{epoch:03d}.pt"
+            path  = str(self.save_dir / fname)
+            torch.save({
+                "epoch":       epoch,
+                "model_state": model.state_dict(),
+                "optim_state": optimizer.state_dict(),
+                "sched_state": scheduler.state_dict() if scheduler else None,
+                "metrics":     metrics,
+                "extra":       extra or {},
+            }, path)
+            return path
 
         ckpt = {
             "epoch":       epoch,
