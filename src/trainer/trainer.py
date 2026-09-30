@@ -155,6 +155,53 @@ class Trainer:
             )
         return None
 
+    # ── Resume from Checkpoint ────────────────────────────────
+
+    def resume_from_checkpoint(self, checkpoint_path: str) -> int:
+        """
+        Load model, optimizer, and scheduler state từ checkpoint.
+
+        Returns:
+            start_epoch (int): epoch tiếp theo cần train
+                               (ví dụ: checkpoint epoch=50 → trả về 50 → train từ epoch 51)
+        """
+        path = Path(checkpoint_path)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint không tồn tại: {checkpoint_path}\n"
+                f"Kiểm tra lại đường dẫn hoặc Drive đã mount chưa."
+            )
+
+        self.logger.info(f"Resuming from checkpoint: {path}")
+        ckpt = torch.load(str(path), map_location=self.device)
+
+        # ── Load model weights ────────────────────────────────
+        self.model.load_state_dict(ckpt["model_state"])
+        self.logger.info(f"  ✅ Model weights loaded")
+
+        # ── Load optimizer state ──────────────────────────────
+        if "optim_state" in ckpt and ckpt["optim_state"] is not None:
+            self.optimizer.load_state_dict(ckpt["optim_state"])
+            self.logger.info(f"  ✅ Optimizer state loaded")
+
+        # ── Load scheduler state ──────────────────────────────
+        if self.scheduler and "sched_state" in ckpt and ckpt["sched_state"] is not None:
+            self.scheduler.load_state_dict(ckpt["sched_state"])
+            self.logger.info(f"  ✅ Scheduler state loaded")
+
+        # ── Restore best metric for checkpoint manager ────────
+        if "metrics" in ckpt:
+            val_dice = ckpt["metrics"].get("val_dice_mean", None)
+            if val_dice is not None:
+                self.ckpt_manager.best_value = val_dice
+                self.logger.info(f"  ✅ Best val_dice restored: {val_dice:.4f}")
+
+        start_epoch = ckpt.get("epoch", 0)
+        self.logger.info(
+            f"  📍 Resuming from epoch {start_epoch + 1}/{self.epochs}"
+        )
+        return start_epoch
+
     # ── Training Loop ─────────────────────────────────────────
 
     def fit(self, start_epoch: int = 0) -> Dict[str, list]:
